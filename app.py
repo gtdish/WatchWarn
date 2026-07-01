@@ -290,7 +290,7 @@ def parse_event_motion(motion_text):
         degrees = int(deg_part)
         knots = int(kt_part)
 
-        direction = degrees_to_cardinal(degrees)
+        direction = degrees_to_cardinal((degrees + 180) % 360)
         mph = round((knots * 1.15078) / 5) * 5
 
         return direction, str(mph)
