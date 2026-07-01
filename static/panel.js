@@ -13,13 +13,10 @@ const SUPPRESSED_ALERTS = new Set([
     "FL.Y",
     "FA.W",
     "FL.W",
-    "TS.Y",
-	
-	// Remove heat alerts for alternate panel
-
-    "HT.Y",
-    "XH.A",
-    "XH.W"
+    "TS.Y", 
+	"HT.Y",
+	"XH.A",
+	"XH.W"
 ]);
 
 const EXPIRED_GRACE_MINUTES = 5;
@@ -40,6 +37,7 @@ function getAlertLabel(props) {
         "TO.W": "TORNADO WARNING",
         "SV.W": "SEVERE THUNDERSTORM WARNING",
         "FF.W": "FLASH FLOOD WARNING",
+        "FW.W": "FLASH FLOOD WARNING",
         "FF.A": "FLOOD WATCH",
         "FA.A": "FLOOD WATCH",
         "SV.A": "SEVERE THUNDERSTORM WATCH",
@@ -73,7 +71,7 @@ function getAlertClass(props) {
     ].join(" ").toUpperCase();
 
     if (
-        (code === "TO.W" || code === "FF.W") &&
+        (code === "TO.W" || code === "FF.W" || code === "FW.W") &&
         tagText.includes("EMERGENCY")
     ) {
         return "alert-emergency";
@@ -89,7 +87,7 @@ function getAlertClass(props) {
 
     if (code === "TO.W") return "alert-tor";
     if (code === "SV.W") return "alert-svr";
-    if (code === "FF.W") return "alert-ffw";
+    if (code === "FF.W" || code === "FW.W") return "alert-ffw";
 
     if (code === "FF.A" || code === "FA.A") return "alert-flood-watch";
     if (code === "SV.A") return "alert-svr-watch";
@@ -624,7 +622,7 @@ async function loadPanelAlerts() {
 async function initPanel() {
     await loadZoneLookup();
     await loadPanelAlerts();
-    setInterval(loadPanelAlerts, 30000);
+    setInterval(loadPanelAlerts, 10000);
 }
 
 initPanel();

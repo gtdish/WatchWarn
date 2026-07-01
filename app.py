@@ -2,22 +2,21 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import geopandas as gpd
+import pandas as pd
 import requests
-import tempfile
-import zipfile
 import json
 import re
-import time
 from pathlib import Path
+from datetime import datetime, timezone
 
 app = FastAPI(title="WatchWarn")
 
-IEM_CURRENT_WW_ZIP = "https://mesonet.agron.iastate.edu/data/gis/shape/4326/us/current_ww.zip"
 NWS_ACTIVE_ALERTS_API = "https://api.weather.gov/alerts/active?status=actual&message_type=alert,update"
 COUNTY_FILE = Path("static/us_counties.geojson")
 
 NWS_HEADERS = {
-    "User-Agent": "WatchWarn/1.0 contact: jdisharoon"
+    "User-Agent": "WatchWarn/1.0 contact: jdisharoon",
+    "Accept": "application/geo+json"
 }
 
 LOCAL_COUNTIES = {
@@ -54,13 +53,18 @@ STATE_NAME_TO_ABBR = {
     "north carolina": "NC"
 }
 
-NWS_CACHE = {
-    "timestamp": 0,
-    "active_keys": set(),
-    "metadata": {}
+EVENT_CODE_LOOKUP = {
+    "Tornado Warning": ("TO", "W"),
+    "Tornado Watch": ("TO", "A"),
+    "Severe Thunderstorm Warning": ("SV", "W"),
+    "Severe Thunderstorm Watch": ("SV", "A"),
+    "Flash Flood Warning": ("FF", "W"),
+    "Flash Flood Watch": ("FF", "A"),
+    "Flood Watch": ("FA", "A"),
+    "Extreme Heat Warning": ("XH", "W"),
+    "Extreme Heat Watch": ("XH", "A"),
+    "Heat Advisory": ("HT", "Y")
 }
-
-NWS_CACHE_SECONDS = 10
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -89,6 +93,7 @@ def normalize_state(value):
         return ""
 
     text = str(value).strip()
+
     if not text:
         return ""
 
@@ -102,6 +107,7 @@ def normalize_state(value):
         return STATE_NAME_TO_ABBR[lower]
 
     digits = re.sub(r"\D", "", text)
+
     if digits:
         digits = digits.zfill(2)
         return STATEFP_TO_ABBR.get(digits, "")
@@ -162,65 +168,16 @@ def load_counties():
     return counties
 
 
-def filter_local_alerts(alerts, counties):
-    local_counties = counties.loc[counties["IS_LOCAL"]].copy()
+def iso_to_iem(value):
+    if not value:
+        return ""
 
-    if alerts.empty or local_counties.empty:
-        return alerts.iloc[0:0].copy()
-
-    joined = gpd.sjoin(
-        alerts,
-        local_counties,
-        how="inner",
-        predicate="intersects"
-    )
-
-    if joined.empty:
-        return alerts.iloc[0:0].copy()
-
-    local_alert_indexes = sorted(set(joined.index))
-    return alerts.loc[local_alert_indexes].copy()
-
-
-def enrich_alert_counties(alerts, counties):
-    alerts["COUNTY_NAMES"] = None
-    alerts["LOCAL_COUNTY_NAMES"] = None
-
-    if alerts.empty or counties.empty:
-        return alerts
-
-    local_counties = counties.loc[counties["IS_LOCAL"]].copy()
-
-    if local_counties.empty:
-        return alerts
-
-    joined = gpd.sjoin(
-        local_counties,
-        alerts,
-        how="inner",
-        predicate="intersects"
-    )
-
-    county_lookup = {}
-
-    for _, row in joined.iterrows():
-        alert_index = row["index_right"]
-        county_name = row.get("NAME")
-        state_abbr = row.get("STATE_ABBR")
-
-        if county_name:
-            label = str(county_name).strip()
-            if state_abbr and state_abbr != "GA":
-                label = f"{label}, {state_abbr}"
-
-            county_lookup.setdefault(alert_index, set()).add(label)
-
-    for alert_index, county_names in county_lookup.items():
-        sorted_counties = sorted(county_names)
-        alerts.at[alert_index, "COUNTY_NAMES"] = sorted_counties
-        alerts.at[alert_index, "LOCAL_COUNTY_NAMES"] = sorted_counties
-
-    return alerts
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        dt = dt.astimezone(timezone.utc)
+        return dt.strftime("%Y%m%d%H%M")
+    except Exception:
+        return ""
 
 
 def as_text(value):
@@ -246,23 +203,6 @@ def get_parameter(parameters, key):
     return ""
 
 
-def make_vtec_key(wfo, phenom, sig, etn):
-    if not wfo or not phenom or not sig or etn is None:
-        return None
-
-    try:
-        etn_int = int(etn)
-    except Exception:
-        return None
-
-    return (
-        str(wfo).strip().upper(),
-        str(phenom).strip().upper(),
-        str(sig).strip().upper(),
-        str(etn_int)
-    )
-
-
 def extract_vtec_keys(vtec_values):
     keys = []
 
@@ -279,14 +219,47 @@ def extract_vtec_keys(vtec_values):
         )
 
         for wfo, phenom, sig, etn in matches:
-            keys.append((
-                wfo.upper(),
-                phenom.upper(),
-                sig.upper(),
-                str(int(etn))
-            ))
+            keys.append({
+                "WFO": wfo.upper(),
+                "PHENOM": phenom.upper(),
+                "SIG": sig.upper(),
+                "ETN": str(int(etn))
+            })
 
     return keys
+
+
+def event_to_code(event):
+    event_text = str(event or "").strip()
+
+    if event_text in EVENT_CODE_LOOKUP:
+        phenom, sig = EVENT_CODE_LOOKUP[event_text]
+        return phenom, sig
+
+    upper = event_text.upper()
+
+    if "TORNADO WARNING" in upper:
+        return "TO", "W"
+    if "TORNADO WATCH" in upper:
+        return "TO", "A"
+    if "SEVERE THUNDERSTORM WARNING" in upper:
+        return "SV", "W"
+    if "SEVERE THUNDERSTORM WATCH" in upper:
+        return "SV", "A"
+    if "FLASH FLOOD WARNING" in upper:
+        return "FF", "W"
+    if "FLASH FLOOD WATCH" in upper:
+        return "FF", "A"
+    if "FLOOD WATCH" in upper:
+        return "FA", "A"
+    if "EXTREME HEAT WARNING" in upper:
+        return "XH", "W"
+    if "EXTREME HEAT WATCH" in upper:
+        return "XH", "A"
+    if "HEAT ADVISORY" in upper:
+        return "HT", "Y"
+
+    return "", ""
 
 
 def degrees_to_cardinal(degrees):
@@ -305,7 +278,7 @@ def parse_event_motion(motion_text):
     if not motion_text:
         return "", ""
 
-    parts = motion_text.split("...")
+    parts = str(motion_text).split("...")
 
     if len(parts) < 4:
         return "", ""
@@ -378,101 +351,244 @@ def build_alert_metadata(properties):
     }
 
 
-def fetch_nws_active_data():
-    now = time.time()
+def make_local_area_text(row):
+    state_abbr = row.get("STATE_ABBR", "")
+    county_name = row.get("NAME", "")
 
-    if now - NWS_CACHE["timestamp"] < NWS_CACHE_SECONDS:
-        return NWS_CACHE["active_keys"], NWS_CACHE["metadata"]
+    if state_abbr and state_abbr != "GA":
+        return f"{county_name}, {state_abbr}"
 
+    return county_name
+
+
+def area_desc_mentions_local_county(area_desc, county_name, state_abbr):
+    area = str(area_desc or "").lower()
+    county = normalize_county_name(county_name)
+
+    if not area or not county:
+        return False
+
+    candidates = [
+        f"{county}, {state_abbr.lower()}",
+        f"{county} county",
+        f"{county};",
+        f"{county} "
+    ]
+
+    return any(candidate in area for candidate in candidates) or area == county
+
+
+def build_synthetic_geometry_from_area_desc(properties, local_counties):
+    area_desc = properties.get("areaDesc", "")
+    matches = []
+
+    for idx, county in local_counties.iterrows():
+        if area_desc_mentions_local_county(
+            area_desc,
+            county.get("NAME"),
+            county.get("STATE_ABBR")
+        ):
+            matches.append(idx)
+
+    if not matches:
+        return None, []
+
+    matched = local_counties.loc[matches].copy()
+    geometry = matched.geometry.union_all()
+    county_names = sorted(make_local_area_text(row) for _, row in matched.iterrows())
+
+    return geometry, county_names
+
+
+def convert_nws_feature_to_record(feature, local_counties):
+    properties = feature.get("properties", {}) or {}
+    geometry = feature.get("geometry")
+
+    event = properties.get("event", "")
+    parameters = properties.get("parameters") or {}
+    vtec_keys = extract_vtec_keys(parameters.get("VTEC") or [])
+
+    if vtec_keys:
+        key = vtec_keys[0]
+        phenom = key["PHENOM"]
+        sig = key["SIG"]
+        etn = key["ETN"]
+        wfo = key["WFO"]
+    else:
+        phenom, sig = event_to_code(event)
+        etn = ""
+        wfo = ""
+
+    if not phenom or not sig:
+        return None
+
+    metadata = build_alert_metadata(properties)
+
+    issued = iso_to_iem(properties.get("sent"))
+    updated = iso_to_iem(properties.get("sent"))
+    begins = iso_to_iem(
+        properties.get("effective") or
+        properties.get("onset") or
+        properties.get("sent")
+    )
+    expires = iso_to_iem(
+        properties.get("expires") or
+        properties.get("ends")
+    )
+
+    record = {
+        "ID": properties.get("id") or feature.get("id") or "",
+        "TYPE": phenom,
+        "PHENOM": phenom,
+        "SIG": sig,
+        "GTYPE": "P" if sig == "W" else "C",
+        "WFO": wfo,
+        "ETN": etn,
+        "ISSUED": issued,
+        "UPDATED": updated,
+        "INIT_ISS": issued,
+        "INIT_EXP": expires,
+        "BEGIN": begins,
+        "EXPIRED": expires,
+        "NWS_UGC": "",
+        "EVENT": event,
+        "HEADLINE": properties.get("headline") or "",
+        "AREA_DESC": properties.get("areaDesc") or "",
+        "COUNTY_NAMES": [],
+        "LOCAL_COUNTY_NAMES": [],
+        **metadata
+    }
+
+    if geometry:
+        return {
+            "record": record,
+            "geometry": geometry
+        }
+
+    synthetic_geometry, county_names = build_synthetic_geometry_from_area_desc(
+        properties,
+        local_counties
+    )
+
+    if synthetic_geometry is None:
+        return None
+
+    record["COUNTY_NAMES"] = county_names
+    record["LOCAL_COUNTY_NAMES"] = county_names
+
+    return {
+        "record": record,
+        "geometry": synthetic_geometry.__geo_interface__
+    }
+
+
+def fetch_nws_features():
     response = requests.get(
         NWS_ACTIVE_ALERTS_API,
         headers=NWS_HEADERS,
         timeout=30
     )
     response.raise_for_status()
+    return response.json().get("features", [])
 
-    data = response.json()
 
-    active_keys = set()
-    metadata_lookup = {}
+def build_nws_geodataframe(local_counties):
+    nws_features = fetch_nws_features()
 
-    for feature in data.get("features", []):
-        properties = feature.get("properties", {})
-        parameters = properties.get("parameters") or {}
+    records = []
+    geometries = []
 
-        vtec_values = parameters.get("VTEC") or []
-        keys = extract_vtec_keys(vtec_values)
+    for feature in nws_features:
+        converted = convert_nws_feature_to_record(feature, local_counties)
 
-        if not keys:
+        if not converted:
             continue
 
-        metadata = build_alert_metadata(properties)
+        records.append(converted["record"])
+        geometries.append(converted["geometry"])
 
-        for key in keys:
-            active_keys.add(key)
-            metadata_lookup[key] = metadata
+    if not records:
+        return gpd.GeoDataFrame(records, geometry=[], crs="EPSG:4326")
 
-    NWS_CACHE["timestamp"] = now
-    NWS_CACHE["active_keys"] = active_keys
-    NWS_CACHE["metadata"] = metadata_lookup
+    gdf = gpd.GeoDataFrame.from_features(
+        [
+            {
+                "type": "Feature",
+                "properties": record,
+                "geometry": geometry
+            }
+            for record, geometry in zip(records, geometries)
+        ],
+        crs="EPSG:4326"
+    )
 
-    return active_keys, metadata_lookup
+    return gdf
 
 
-def filter_to_nws_active_alerts(alerts):
-    if alerts.empty:
-        return alerts
-
-    active_keys, _ = fetch_nws_active_data()
-
-    if not active_keys:
+def filter_local_alerts(alerts, local_counties):
+    if alerts.empty or local_counties.empty:
         return alerts.iloc[0:0].copy()
 
-    keep_indexes = []
+    alerts = alerts.copy()
+    alerts["_ALERT_INDEX"] = alerts.index
 
-    for idx, row in alerts.iterrows():
-        key = make_vtec_key(
-            row.get("WFO"),
-            row.get("PHENOM"),
-            row.get("SIG"),
-            row.get("ETN")
-        )
+    joined = gpd.sjoin(
+        alerts,
+        local_counties,
+        how="inner",
+        predicate="intersects"
+    )
 
-        if key and key in active_keys:
-            keep_indexes.append(idx)
+    if joined.empty:
+        return alerts.iloc[0:0].copy()
 
-    return alerts.loc[keep_indexes].copy()
+    keep_indexes = sorted(set(joined["_ALERT_INDEX"]))
+    local_alerts = alerts.loc[keep_indexes].copy()
+
+    if "_ALERT_INDEX" in local_alerts.columns:
+        local_alerts = local_alerts.drop(columns=["_ALERT_INDEX"])
+
+    return local_alerts
 
 
-def enrich_alert_tags(alerts):
-    alerts["PRIMARY_TAG"] = None
-    alerts["STACKED_TAGS"] = None
-    alerts["MAX_WIND"] = None
-    alerts["MAX_HAIL"] = None
-    alerts["STORM_DIRECTION"] = None
-    alerts["STORM_SPEED"] = None
-    alerts["NWS_HEADLINE"] = None
+def enrich_alert_counties(alerts, local_counties):
+    alerts["COUNTY_NAMES"] = [[] for _ in range(len(alerts))]
+    alerts["LOCAL_COUNTY_NAMES"] = [[] for _ in range(len(alerts))]
 
-    _, tag_lookup = fetch_nws_active_data()
+    if alerts.empty or local_counties.empty:
+        return alerts
 
-    for idx, row in alerts.iterrows():
-        key = make_vtec_key(
-            row.get("WFO"),
-            row.get("PHENOM"),
-            row.get("SIG"),
-            row.get("ETN")
-        )
+    alerts = alerts.copy()
+    alerts["_ALERT_INDEX"] = alerts.index
 
-        if not key:
-            continue
+    joined = gpd.sjoin(
+        local_counties,
+        alerts,
+        how="inner",
+        predicate="intersects"
+    )
 
-        metadata = tag_lookup.get(key)
+    county_lookup = {}
 
-        if not metadata:
-            continue
+    for _, row in joined.iterrows():
+        alert_index = row["index_right"]
+        county_name = row.get("NAME")
+        state_abbr = row.get("STATE_ABBR")
 
-        for field in metadata:
-            alerts.at[idx, field] = metadata[field]
+        if county_name:
+            label = str(county_name).strip()
+            if state_abbr and state_abbr != "GA":
+                label = f"{label}, {state_abbr}"
+
+            county_lookup.setdefault(alert_index, set()).add(label)
+
+    for alert_index, county_names in county_lookup.items():
+        sorted_counties = sorted(county_names)
+        alerts.at[alert_index, "COUNTY_NAMES"] = sorted_counties
+        alerts.at[alert_index, "LOCAL_COUNTY_NAMES"] = sorted_counties
+
+    if "_ALERT_INDEX" in alerts.columns:
+        alerts = alerts.drop(columns=["_ALERT_INDEX"])
 
     return alerts
 
@@ -480,56 +596,27 @@ def enrich_alert_tags(alerts):
 @app.get("/api/alerts")
 def get_alerts():
     try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
-            zip_path = tmpdir / "current_ww.zip"
+        counties = load_counties()
+        local_counties = counties.loc[counties["IS_LOCAL"]].copy()
 
-            response = requests.get(IEM_CURRENT_WW_ZIP, timeout=30)
-            response.raise_for_status()
-            zip_path.write_bytes(response.content)
+        alerts = build_nws_geodataframe(local_counties)
 
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extractall(tmpdir)
+        if alerts.empty:
+            return {"type": "FeatureCollection", "features": []}
 
-            shp_files = list(tmpdir.glob("*.shp"))
+        if alerts.crs is None:
+            alerts = alerts.set_crs(epsg=4326)
+        else:
+            alerts = alerts.to_crs(epsg=4326)
 
-            if not shp_files:
-                return JSONResponse(
-                    status_code=500,
-                    content={"error": "No shapefile found"}
-                )
+        alerts = filter_local_alerts(alerts, local_counties)
+        alerts = enrich_alert_counties(alerts, local_counties)
 
-            alerts = gpd.read_file(shp_files[0])
+        if alerts.empty:
+            return {"type": "FeatureCollection", "features": []}
 
-            if alerts.empty:
-                return {"type": "FeatureCollection", "features": []}
-
-            if alerts.crs is None:
-                alerts = alerts.set_crs(epsg=4326)
-            else:
-                alerts = alerts.to_crs(epsg=4326)
-
-            alerts["SIG"] = alerts["SIG"].astype(str).str.strip()
-            alerts["GTYPE"] = alerts["GTYPE"].astype(str).str.strip()
-
-            alerts = filter_to_nws_active_alerts(alerts)
-
-            remove_warning_counties = (
-                (alerts["SIG"] == "W") &
-                (alerts["GTYPE"] == "C")
-            )
-
-            alerts = alerts.loc[~remove_warning_counties].copy()
-
-            if COUNTY_FILE.exists():
-                counties = load_counties()
-                alerts = filter_local_alerts(alerts, counties)
-                alerts = enrich_alert_counties(alerts, counties)
-
-            alerts = enrich_alert_tags(alerts)
-
-            geojson = json.loads(alerts.to_json(na="null"))
-            return JSONResponse(content=geojson)
+        geojson = json.loads(alerts.to_json(na="null"))
+        return JSONResponse(content=geojson)
 
     except Exception as error:
         return JSONResponse(
@@ -545,6 +632,45 @@ def debug_local_counties():
         local = counties.loc[counties["IS_LOCAL"], ["NAME", "STATE_ABBR"]].copy()
         local = local.sort_values(["STATE_ABBR", "NAME"])
         return JSONResponse(content=local.to_dict(orient="records"))
+    except Exception as error:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(error)}
+        )
+
+
+@app.get("/api/debug/alerts-summary")
+def debug_alerts_summary():
+    try:
+        counties = load_counties()
+        local_counties = counties.loc[counties["IS_LOCAL"]].copy()
+
+        alerts = build_nws_geodataframe(local_counties)
+
+        if alerts.empty:
+            return JSONResponse(content=[])
+
+        alerts = filter_local_alerts(alerts, local_counties)
+        alerts = enrich_alert_counties(alerts, local_counties)
+
+        rows = []
+
+        for _, row in alerts.iterrows():
+            rows.append({
+                "event": row.get("EVENT"),
+                "phenom": row.get("PHENOM"),
+                "sig": row.get("SIG"),
+                "wfo": row.get("WFO"),
+                "etn": row.get("ETN"),
+                "issued": row.get("ISSUED"),
+                "begins": row.get("BEGIN"),
+                "expires": row.get("EXPIRED"),
+                "counties": row.get("COUNTY_NAMES"),
+                "headline": row.get("NWS_HEADLINE") or row.get("HEADLINE")
+            })
+
+        return JSONResponse(content=rows)
+
     except Exception as error:
         return JSONResponse(
             status_code=500,
