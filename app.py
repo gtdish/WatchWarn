@@ -63,7 +63,7 @@ EVENT_CODE_LOOKUP = {
     "Flood Watch": ("FA", "A"),
     "Extreme Heat Warning": ("XH", "W"),
     "Extreme Heat Watch": ("XH", "A"),
-    "Heat Advisory": ("HT", "Y")
+    "Heat Advisory": ("HT", "Y"),
     "Special Weather Statement": ("SP", "S")
 }
 
