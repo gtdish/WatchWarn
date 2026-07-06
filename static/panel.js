@@ -13,10 +13,12 @@ const SUPPRESSED_ALERTS = new Set([
     "FL.Y",
     "FA.W",
     "FL.W",
-    "TS.Y", 
-	"HT.Y",
-	"XH.A",
-	"XH.W"
+    "TS.Y",
+
+    // NO HEAT VERSION
+    "HT.Y",
+    "XH.A",
+    "XH.W"
 ]);
 
 const EXPIRED_GRACE_MINUTES = 5;
@@ -38,6 +40,7 @@ function getAlertLabel(props) {
         "SV.W": "SEVERE THUNDERSTORM WARNING",
         "FF.W": "FLASH FLOOD WARNING",
         "FW.W": "FLASH FLOOD WARNING",
+        "SP.S": "SPECIAL WEATHER STATEMENT",
         "FF.A": "FLOOD WATCH",
         "FA.A": "FLOOD WATCH",
         "SV.A": "SEVERE THUNDERSTORM WATCH",
@@ -55,7 +58,11 @@ function getTopRightTag(props) {
         return props.PRIMARY_TAG;
     }
 
-    if (props.TYPE === "SV" && Array.isArray(props.STACKED_TAGS) && props.STACKED_TAGS.length > 0) {
+    if (
+        (props.TYPE === "SV" || getAlertCode(props) === "SP.S") &&
+        Array.isArray(props.STACKED_TAGS) &&
+        props.STACKED_TAGS.length > 0
+    ) {
         return props.STACKED_TAGS.join(" - ");
     }
 
@@ -88,6 +95,7 @@ function getAlertClass(props) {
     if (code === "TO.W") return "alert-tor";
     if (code === "SV.W") return "alert-svr";
     if (code === "FF.W" || code === "FW.W") return "alert-ffw";
+    if (code === "SP.S") return "alert-sps";
 
     if (code === "FF.A" || code === "FA.A") return "alert-flood-watch";
     if (code === "SV.A") return "alert-svr-watch";
@@ -299,7 +307,8 @@ function getMergeKey(props) {
     return [
         props.ETN || "",
         props.PHENOM || "",
-        props.SIG || ""
+        props.SIG || "",
+        props.WFO || ""
     ].join("-");
 }
 
@@ -383,11 +392,13 @@ function buildMovementText(props) {
 }
 
 function buildSecondaryLine(props) {
+    const code = getAlertCode(props);
+
     if (props.TYPE === "TO") {
         return buildMovementText(props);
     }
 
-    if (props.TYPE === "SV") {
+    if (props.TYPE === "SV" || code === "SP.S") {
         const parts = [];
 
         if (props.MAX_WIND) {

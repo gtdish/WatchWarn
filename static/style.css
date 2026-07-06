@@ -247,3 +247,8 @@ body.panel-body {
     border-left-color: rgb(151,66,255);
     background: rgba(151,66,255,.22);
 }
+
+.alert-sps {
+    background: #3a3a3a;
+    color: #ffffff;
+}

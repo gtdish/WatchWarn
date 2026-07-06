@@ -64,6 +64,7 @@ EVENT_CODE_LOOKUP = {
     "Extreme Heat Warning": ("XH", "W"),
     "Extreme Heat Watch": ("XH", "A"),
     "Heat Advisory": ("HT", "Y")
+    "Special Weather Statement": ("SP", "S")
 }
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -357,6 +358,8 @@ def event_to_code(event):
         return "XH", "A"
     if "HEAT ADVISORY" in upper:
         return "HT", "Y"
+    if "SPECIAL WEATHER STATEMENT" in upper:
+        return "SP", "S"
 
     return "", ""
 
