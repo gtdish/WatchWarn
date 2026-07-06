@@ -21,20 +21,19 @@ NWS_HEADERS = {
 
 LOCAL_COUNTIES = {
     "GA": {
-        "banks", "barrow", "bartow", "butts", "carroll", "catoosa", "chattooga",
-        "cherokee", "clarke", "clayton", "cobb", "coweta", "dade", "dawson",
-        "dekalb", "douglas", "fannin", "fayette", "floyd", "forsyth", "franklin",
+        "banks", "barrow", "bartow", "butts", "carroll", "chattooga",
+        "cherokee", "clarke", "clayton", "cobb", "coweta", "dawson",
+        "dekalb", "douglas", "fannin", "fayette", "floyd", "forsyth",
         "fulton", "gilmer", "gordon", "greene", "gwinnett", "habersham", "hall",
-        "haralson", "harris", "heard", "henry", "jackson", "lamar", "lumpkin",
-        "madison", "meriwether", "morgan", "murray", "newton", "oconee",
+        "haralson", "heard", "henry", "jackson", "jasper", "lamar", "lumpkin",
+        "madison", "meriwether", "morgan", "newton", "oconee",
         "oglethorpe", "paulding", "pickens", "pike", "polk", "putnam",
-        "rabun", "rockdale", "spalding", "talbot", "towns", "troup", "union",
-        "upson", "walker", "walton", "white", "whitfield"
+        "rabun", "rockdale", "spalding", "towns", "troup", "union",
+        "upson", "walton", "white"
     },
     "AL": {
         "randolph",
-        "cleburne",
-        "clebourne"
+        "cleburne"
     },
     "NC": {
         "clay"
