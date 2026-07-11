@@ -304,6 +304,17 @@ function shouldMergeFeature(props) {
 }
 
 function getMergeKey(props) {
+    const code = getAlertCode(props);
+
+    if (code === "SP.S") {
+        return props.ID || [
+            props.ISSUED || "",
+            props.UPDATED || "",
+            props.HEADLINE || "",
+            props.AREA_DESC || ""
+        ].join("-");
+    }
+
     return [
         props.ETN || "",
         props.PHENOM || "",
@@ -378,7 +389,12 @@ function formatDirection(direction) {
 }
 
 function buildMovementText(props) {
-    if (!props.STORM_DIRECTION || props.STORM_SPEED === null || props.STORM_SPEED === undefined || props.STORM_SPEED === "") {
+    if (
+        !props.STORM_DIRECTION ||
+        props.STORM_SPEED === null ||
+        props.STORM_SPEED === undefined ||
+        props.STORM_SPEED === ""
+    ) {
         return "";
     }
 
@@ -548,6 +564,7 @@ function renderAlerts(data) {
                 <div class="empty-subtitle">Waiting for new watches and warnings</div>
             </div>
         `;
+
         panelUpdated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
         return;
     }
@@ -558,21 +575,27 @@ function renderAlerts(data) {
         const topRightTag = getTopRightTag(props);
 
         const card = document.createElement("div");
-        card.className = `alert-card ${getAlertClass(props)} ${isNewlyUpdated(props) ? "alert-new" : ""}`;
+
+        card.className = `alert-card ${getAlertClass(props)} ${
+            isNewlyUpdated(props) ? "alert-new" : ""
+        }`;
 
         card.innerHTML = `
             <div class="alert-top-row">
                 <div class="alert-title">${getAlertLabel(props)}</div>
+
                 ${
                     topRightTag
-                        ? `<div class="alert-title"
-                                style="
-                                    text-align: right;
-                                    margin-left: 24px;
-                                    white-space: nowrap;
-                                ">
+                        ? `
+                            <div class="alert-title"
+                                 style="
+                                     text-align: right;
+                                     margin-left: 24px;
+                                     white-space: nowrap;
+                                 ">
                                 ${topRightTag}
-                           </div>`
+                            </div>
+                        `
                         : ""
                 }
             </div>
@@ -584,7 +607,9 @@ function renderAlerts(data) {
                 ${buildRightTimesHtml(props, minutesLeft)}
             </div>
 
-            <div class="alert-ugc alert-area-list">${buildAreaText(item)}</div>
+            <div class="alert-ugc alert-area-list">
+                ${buildAreaText(item)}
+            </div>
         `;
 
         alertList.appendChild(card);
@@ -633,6 +658,7 @@ async function loadPanelAlerts() {
 async function initPanel() {
     await loadZoneLookup();
     await loadPanelAlerts();
+
     setInterval(loadPanelAlerts, 10000);
 }
 
