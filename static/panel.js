@@ -198,16 +198,6 @@ function formatDayTime(value) {
     return `${day} ${time}`;
 }
 
-function isSameLocalDate(dateA, dateB) {
-    if (!dateA || !dateB) return false;
-
-    return (
-        dateA.getFullYear() === dateB.getFullYear() &&
-        dateA.getMonth() === dateB.getMonth() &&
-        dateA.getDate() === dateB.getDate()
-    );
-}
-
 function isFutureEffective(props) {
     if (!isFutureEffectiveProduct(props)) return false;
 
@@ -231,13 +221,13 @@ function shouldShowBeginExpire(props, minutesLeft) {
     return false;
 }
 
-function floodWatchNeedsLongExpire(props) {
+function floodWatchNeedsLongExpire(props, minutesLeft) {
     if (!isFloodWatch(props)) return false;
 
-    const expireDate = parseIemDate(props.EXPIRED);
-    if (!expireDate) return false;
-
-    return !isSameLocalDate(expireDate, new Date());
+    return (
+        minutesLeft !== null &&
+        minutesLeft >= LONG_DURATION_MINUTES
+    );
 }
 
 function getMinutesRemaining(expiredValue) {
@@ -426,6 +416,7 @@ function buildSecondaryLine(props) {
         }
 
         const movement = buildMovementText(props);
+
         if (movement) {
             parts.push(movement);
         }
@@ -513,7 +504,7 @@ function buildRightTimesHtml(props, minutesLeft) {
         `;
     }
 
-    if (floodWatchNeedsLongExpire(props)) {
+    if (floodWatchNeedsLongExpire(props, minutesLeft)) {
         return `
             <div class="alert-right-times">
                 <div class="alert-time-block">
